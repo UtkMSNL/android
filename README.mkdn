@@ -1,50 +1,79 @@
-CyanogenMod
-===========
+Code Offload with Least Context Migration in the Mobile Cloud
+=============================================================
+This is the home of the repository for paper [Code Offload with Least Context Migration in the Mobile Cloud](http://web.eecs.utk.edu/~weigao/publications/infocom15.pdf), which is published in IEEE INFOCOM 2015. These are the instructions for building and running the target work.
 
-Submitting Patches
-------------------
-Patches are always welcome!  Please submit your patches via CyanogenMod Gerrit!
-You can do this by using these commands:
+Instructions
+============
 
-    (From root android directory)
-    . build/envsetup.sh
-    (Go to repo you are patching, make your changes and commit)
-    cmgerrit <for(new)/changes(patch set)> <branch/change-id> 
+Initializing your build environment
+-----------------------------------
 
-    repo start jellybean .
-    (Make your changes and commit)
-    repo upload .
-Note: "." meaning current directory
-For more help on using this tool, use this command: repo help upload
+Follow the directions listed on the [AOSP](http://source.android.com/source/initializing.html) website. Our work is currently based on version 4.1.x (Jellybean) of Android.
 
-Make your changes and commit with a detailed message, starting with what you are working with (i.e. vision: Update Kernel)
-Commit your patches in a single commit. Squash multiple commit using this command: git rebase -i HEAD~<# of commits>
+Downloading Source Code
+-----------------------
 
-To view the status of your and others' patches, visit [CyanogenMod Code Review](http://review.cyanogenmod.org/)
+Downloading the source code is almost the same as downloading the source code from the Android Open Source Project. Follow the directions on the [AOSP](http://source.android.com/source/downloading.html) page up to the "Getting the files" section. However use the below command to initialize your repository instead of the one listed in the link.
 
+    repo init -u https://github.com/UtkMSNL/offload_android -b jellybean
 
-Getting Started
----------------
+Compiling for the first time
+----------------------------
 
-To get started with Android/CyanogenMod, you'll need to get
-familiar with [Git and Repo](http://source.android.com/download/using-repo).
+We have tested our work on Google Nexus S module. A detailed build instructions can be found on [CyanogenMod build for Google Nexus S](https://wiki.cyanogenmod.org/w/Build_for_crespo). You can take time to learn and follow their steps.
 
-To initialize your local repository using the CyanogenMod trees, use a command like this:
+Building for our work
+---------------------
+After you have finished building the source code for crespo. You will be ready to build the VM with code offloading enabled. Again, make sure you have the build environment sourced in. To select VM to be installed run the following command.
 
-    repo init -u git://github.com/CyanogenMod/android.git -b jellybean
+    # switch the vm building mode to enable offloading. If you don't want to do so in the future, simply replace 'offload' as 'none'    
+    scripts/switch_vm.sh offload
+    # clean the existing vm libraries
+    scripts/clean_vm.sh
+    # command to build the dalvik vm libraries only
+    make libdvm
+    # command to push the newly built libraries into the phone
+    scripts/push_vm.sh
+    
+Setting up your server
+----------------------
+Now you will be ready to use our code offloading. Currently the only mechanism to configure the server the phone connects to is by editing the file scripts/30tcpmux and then running push_vm.sh again. For example if your server IP address is 12.34.56.78 then you should make your 30tcpmux file look like
 
-Then to sync up:
+    #!/system/bin/sh
 
-    repo sync
+    if [ -e /system/bin/tcpmux ];
+    then
+      tcpmux --daemon --control 5554 --retry 5555 12.34.56.78:5556
+    fi;
 
-Please see the [CyanogenMod Wiki](http://wiki.cyanogenmod.org/) for building instructions.
+The rest of the commands are to be run from the vm_test folder. First you need to setup your server environment. Run the following commands with your device plugged in.
 
-For more information on this Github Organization and how it is structured, 
-please [read the wiki article](http://wiki.cyanogenmod.org/index.php/Github_Organization)
+    ./setup_links.sh
+    ./setup_server.sh myconfig prepare
 
-Buildbot
---------
+With your environment setup, running the server requires running two daemons. The first is the tcpmux daemon responsible for multiplexing connections over one connection for all client VMs and handling disconnections gracefully. To run this in the background you can run the command
 
-All supported devices are built nightly and periodically as changes are committed to ensure the source trees remain buildable.
+    system/bin/tcpmux --daemon --demux 5556 localhost:12345
 
-You can view the current build statuses at [CyanogenMod Jenkins](http://jenkins.cyanogenmod.org/)
+Note that if you shut this daemon down the phone will need to restart before it can connect again at the moment. Finally you need to start up the server VM with the command
+
+    ./stdrunserv.sh 5556 12345
+
+and you should be good to go. Make sure you do not use the runserv.sh script to start up the server. This script is meant for use in local testing.
+
+Parsing the application
+-----------------------
+Now you can run your application with code offloading enabled. To achieve the minimum context migration, you will need to parse the application first and put the parsing result file into the phone. To enable the code parsing, you need first build the library and host executables first. This work is simply to execute:
+
+    make apkanalysis
+
+Be awaring that you may need to tweak the code in "UnoptDexLoader.cpp" and "GlobalAnalysis.cpp" to setup the path for the booting libraries and output results. The booting libraries are required during the parsing to do sysbol resolve.
+    
+With the execution of this command, you will be able to find an executable being generated in the directory "out/host/linux-x86/bin" with the name "apkanalysis". To parse the application, the command being executed is: 
+
+    # this is to parse the method arguments with maximum 10 subclasses
+    ./apkanalysis path_to_apk -n 10
+    # this is to parse the class static fields with maximum 10 subclasses
+    ./apkanalysis -s path_to_apk -n 10
+
+Find the target parsing result file and put it into the phone under the directory "/data/data/your_full_apk_name/parse.txt". Then you will be ready to go and have your code offload with minimum context migration!
